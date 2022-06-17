@@ -1,3 +1,4 @@
+from audioop import add
 from pprint import pprint
 import requests, json
 import pandas as pd
@@ -14,16 +15,14 @@ doro_api = conf['doroapi']
 
 def get_addr_code(response: list):
     ## 주소 정확도 or 다른 요구사항이 생기면 방식 추가 하기로.
-    print(response)
     response = response[0]
     addr_gu_code = response.get('admCd')
     addr_pnu_code = response.get('bdMgtSn')
-    print(addr_gu_code, addr_pnu_code)
     return addr_gu_code[:5], addr_pnu_code[:19]
 
 async def request_doro_api(addr: str):
     doro_api_url = f'https://www.juso.go.kr/addrlink/addrLinkApi.do?currentPage=1&countPerPage=50&confmKey={doro_api}&firstSort=location&resultType=json&keyword='
-
+    addr_gu_code, addr_pnu_code = '', '' 
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url=doro_api_url+addr, ssl=False, timeout=5) as response:
@@ -35,17 +34,17 @@ async def request_doro_api(addr: str):
         addr_gu_code, addr_pnu_code = get_addr_code(res.get('results').get('juso'))
     except Exception as e:
         print(e)
-        return 'error'
     
-    return addr_gu_code
+    return addr_gu_code, addr_pnu_code
 
 def get_building_info(response: list):
     response = response[0]
+    pprint(response)
     '''
     mainPrposCodeNm
     detailPrposCodeNm
     '''
-
+    return 
 
 
 async def request_building_info(pnu:str):
@@ -58,7 +57,7 @@ async def request_building_info(pnu:str):
         res = res.get('buildingUses')
         if not res or res.get('totalCount')=='0' or res.get('totalCount') is None:
             raise Exception(f'건물정보 없거나 에러')
-        get_building_info(res.get('field'))
+        info = get_building_info(res.get('field'))
         
     except Exception as e:
         print('def request_building_info')
@@ -68,7 +67,9 @@ async def request_building_info(pnu:str):
 
 async def main_test(test_case: list):
     list_code = await asyncio.gather(*[request_doro_api(addr) for addr in testcase])
-    
+    for addr_code in list_code:
+        if not addr_code[0]: continue
+        
     return list_code
 
 
