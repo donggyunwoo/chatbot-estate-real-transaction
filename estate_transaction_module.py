@@ -1,4 +1,4 @@
-from cmath import inf
+from xml.etree import ElementTree
 from pprint import pprint
 import aiohttp, asyncio
 from bs4 import BeautifulSoup as bs
@@ -40,7 +40,6 @@ dict_estate_url = {
 def get_addr_code(response: list):
     ## 주소 정확도 or 다른 요구사항이 생기면 방식 추가 하기로.
     response = response[0]
-    pprint(response)
     addr_gu_code = response.get('admCd')
     return addr_gu_code[:5]
 
@@ -73,13 +72,11 @@ def pre_processing_date(start:str, end:str)->list:
     date_end = date(year=y_end, month=m_end, day=1)
     if date_start>date_end:
         date_start, date_end = date_end, date_start
+    list_date.append(date_start.strftime('%Y%m'))
     while 1:
-        list_date.append(date_start.strftime('%Y%m'))
         date_start = date_start + relativedelta(months=1)
-        if date_start == date_end:
-            list_date.append(date_start.strftime('%Y%m'))
-            break
-    print(list_date)
+        if date_start > date_end: break
+        list_date.append(date_start.strftime('%Y%m'))
     return list_date
 
 def pre_processing_building_type(context: str) -> list:
@@ -98,34 +95,60 @@ def pre_processing_building_type(context: str) -> list:
         list_url.extend(dict_estate_url.get('토지'))
     return list_url
 
-async def request_estate_api(url:str, type_api:str, date:str, code:str):
+def convert_estate_xml(res:str, addr:str)->list:
+    list_result = []
+    xml_res = ElementTree.fromstring(res)
+    if xml_res.find('header').find('resultCode').text != '00':
+        raise Exception(f"def convert_estate_xml : message : {xml_res.find('header').find('resultMsg').text}")
+    else:
+        items=xml_res.find('body').find('items').findall('item')
+        for item in items:
+            dict_item = dict()
+            item_children = list(item)
+            ## 구에서 동을 찾는 방법은 많음. 생각해봐야할 곳
+            if item.find('법정동').text.replace(' ','') !=addr.split(' ')[-1].replace(' ',''):
+                # print(item.find('법정동').text, addr.split(' ')[-1])
+                continue
+            for item_child in item_children:
+                dict_item[item_child.tag]=item_child.text
+            list_result.append(dict_item)
+    return list_result
+
+async def request_estate_api(url:str, type_api:str, date:str, code:str, addr:str)->tuple:
     params ={'serviceKey' : key, 'LAWD_CD' : code, 'DEAL_YMD' : date }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url=url, timeout=10, params=params) as response:
                 res = await response.text()
-        pprint(res)
+        list_res = convert_estate_xml(res, addr)
     except Exception as e:
         print('request_estate_api', e)
-    return
+    return (type_api, list_res)
 
 async def async_real_estate_transaction(estate_info: list):
     '''
     input : estate_info = [start_date, end_date, [거래 유형], 법정동주소]
-    output : [start_date, end_date, [거래 유형], 법정동주소, 동 코드]
+    output : [start_date, end_date, [거래 유형], 법정동주소]
     '''
     list_type_url = []
     list_date = []
-    list_code = await asyncio.gather(*[request_doro_api(estate_info[-1])])
-    estate_info.append(list_code[0])
+    addr_gu_code = await asyncio.gather(*[request_doro_api(estate_info[-1])])
     list_type_url = pre_processing_building_type(estate_info[2])
     list_date = pre_processing_date(estate_info[0], estate_info[1])
     list_req_info = []
     for url in list_type_url:
         for date in list_date:
-            list_req_info.append([url[0], url[1], date, estate_info[-1]])
-    await asyncio.gather(*[request_estate_api(url=info[0], type_api=info[1], date=info[2], code=info[3]) for info in list_req_info])
-    return list_req_info
+            list_req_info.append([url[0], url[1], date])
+    list_estate_info  = await asyncio.gather(
+        *[request_estate_api(url=info[0], type_api=info[1], date=info[2], code=addr_gu_code[0], addr=estate_info[-1]) for info in list_req_info]
+    )
+    dict_estate_info = dict()
+    for estate_info in list_estate_info:
+        if dict_estate_info.get(estate_info[0]):
+            dict_estate_info[estate_info[0]].extend(estate_info[1])
+        else:
+            dict_estate_info[estate_info[0]]=[estate_info[1]]
+    return dict_estate_info
 
 
 
@@ -133,7 +156,7 @@ async def async_real_estate_transaction(estate_info: list):
 if __name__ == '__main__':
     testcase = [
         # ['22/01', '22/04', '아파트, 단독, 다세대', '서울시 강남구 역삼동'],
-        ['2022/01', '2022/02', '아파트', '서울 강남 역삼'],
+        ['2022/01', '2022/03', '토지, 아파트', '서울 중구 장충동'],
         # ['22/01', '22/04', '아파트, 단독, 다세대', '서울시 강동구 암사동'],
         # ['2022/01', '2022/04', '다세대', '충북 청주시 서원구 남이면 가좌리'],
         # ['2021/01', '2022/04', '아파트', '서울 중구 장충동 1가'],
@@ -141,6 +164,6 @@ if __name__ == '__main__':
     for item in testcase:
         # break
         r = asyncio.run(async_real_estate_transaction(estate_info=item))
-        pprint(r)
+        print(r)
     
     # pre_processing_date('2021/12', '2022/02')
